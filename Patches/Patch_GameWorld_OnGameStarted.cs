@@ -1,8 +1,10 @@
-﻿using EFT;
+using EFT;
 using HarmonyLib;
 using SPT.Reflection.Patching;
 using System;
 using System.Reflection;
+using Fika.Core.Main.Utils;
+using UnityEngine;
 
 namespace tarkin.doordash.Patches
 {
@@ -18,7 +20,8 @@ namespace tarkin.doordash.Patches
         [PatchPostfix]
         private static void PatchPostfix(GameWorld __instance)
         {
-            OnPostfix?.Invoke(__instance);
+            if (__instance is not null)
+                OnPostfix?.Invoke(__instance);
         }
     }
 }
