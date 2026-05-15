@@ -15,14 +15,14 @@ namespace tarkin.doordash.Patches
         }
 
         [PatchPrefix]
-        private static bool PatchPrefix(Door __instance, Vector3 yourPosition)
+        private static bool PatchPrefix(Door __instance)
         {
             if (Plugin.Enabled.Value && Random.value < Plugin.DislodgeChance.Value)
             {
                 __instance.gameObject.AddComponent<PhysicalDoor>();
                 return false;
             }
-
+            
             return true;
         }
     }
