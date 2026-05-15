@@ -1,8 +1,12 @@
 ﻿using EFT;
 using EFT.Ballistics;
 using EFT.Interactive;
-using System.Collections.Generic;
+using Fika.Core.Main.Players;
+using Fika.Core.Networking;
+using Fika.Core.Main.Utils;
 using UnityEngine;
+using Comfort.Common;
+using Fika.Core.Networking.LiteNetLib;
 
 namespace tarkin.doordash
 {
@@ -26,18 +30,50 @@ namespace tarkin.doordash
 
         private void CheckForRam()
         {
-            if (Time.timeScale == 0f)
+            FikaPlayer coopPlayer = player as FikaPlayer;
+
+            if (coopPlayer is null ||
+                Time.timeScale == 0f)
                 return;
 
             float effectiveThresholdSqr = Plugin.VelocityThresholdSqr.Value * (Time.timeScale * Time.timeScale);
+
             if (player.Velocity.sqrMagnitude < effectiveThresholdSqr)
                 return;
 
-            Door door = GetBreachableDoorInFrontOfPlayer(new Vector3(0.1f, 1.4f, 0f));
-            if (door == null)
-                door = GetBreachableDoorInFrontOfPlayer(new Vector3(-0.1f, 1.4f, 0f));
-            if (door != null)
-                RamDoor(door);
+            Door door = GetBreachableDoorInFrontOfPlayer(new Vector3(0.1f, 1.4f, 0f)) ?? 
+                        GetBreachableDoorInFrontOfPlayer(new Vector3(-0.1f, 1.4f, 0f));
+
+            if (door is null ||
+                door.DoorState == EDoorState.Open) 
+                return;
+            
+            door.DoorState = EDoorState.Shut;
+
+            bool doorUsesAnim = door.interactWithoutAnimation;
+
+            door.interactWithoutAnimation = true;
+            RamDoor(door);
+            door.interactWithoutAnimation = doorUsesAnim;
+
+            // Create packet with info that all players will need
+            SyncOpenStatePacket packet = new()
+            {
+                netID = coopPlayer.NetId,
+                objectID = door.Id,
+            };
+
+            if (FikaBackendUtils.IsServer)
+            {
+                // Forward the packet to all clients
+                Singleton<FikaServer>.Instance.SendData(ref packet, DeliveryMethod.ReliableOrdered, true);
+                // ReliableOrdered = ensures the packet is received, re-sends it if it fails
+            }
+            else if (FikaBackendUtils.IsClient)
+            {
+                // If we're a client, send it to the host so they can forward it (Check Plugin.cs for behavior)
+                Singleton<FikaClient>.Instance.SendData(ref packet, DeliveryMethod.ReliableOrdered);
+            }
         }
 
         Door GetBreachableDoorInFrontOfPlayer(Vector3 offsetFromFloor)
@@ -45,48 +81,31 @@ namespace tarkin.doordash
             Vector3 rayOrigin = transform.position + offsetFromFloor;
             Vector3 rayDirection = transform.forward;
 
-            if (Physics.Raycast(rayOrigin, rayDirection, out RaycastHit hit, Plugin.RayDistance.Value, LayerMaskClass.PlayerStaticDoorMask))
-            {
-                Door door = hit.collider.transform.parent?.GetComponent<Door>();
+            if (!Physics.Raycast(rayOrigin, rayDirection, out RaycastHit hit, Plugin.RayDistance.Value, LayerMaskClass.PlayerStaticDoorMask))
+                return null;
 
-                if (door == null)
-                {
-                    door = hit.collider.transform.parent?.parent?.GetComponent<Door>(); // some doors have deeper colliders
-                    if (door == null)
-                        return null;
-                }
+            Door door = (hit.collider.transform.parent?.GetComponent<Door>()) ?? 
+                        hit.collider.transform.parent?.parent?.GetComponent<Door>();
 
-                bool isStateBreachable = 
-                    (door.DoorState == EDoorState.Shut) ||
-                    (door.DoorState == EDoorState.Locked && Plugin.BreachLocked.Value);
+            if (door is null ||
+                door.DoorState == EDoorState.Locked || // excludes locked
+                !door.Operatable ||
+                WillDoorSwingTowardsPlayer(door, transform.position)) 
+                return null;
 
-                if (!isStateBreachable)
-                    return null;
-
-                if (!door.Operatable)
-                    return null;
-
-                if (WillDoorSwingTowardsPlayer(door, transform.position))
-                    return null;
-
-                return door;
-            }
-
-            return null;
+            return door;       
         }
 
         void RamDoor(Door door)
         {
-            bool wasLocked = door.DoorState == EDoorState.Locked;
-
             door.LockForInteraction();
             door.SetUser(player);
             door.Interact(new InteractionResult(EInteractionType.Breach));
 
-            AffectPlayer(door, wasLocked);
+            AffectPlayer(door);
         }
 
-        void AffectPlayer(Door door, bool wasLocked)
+        void AffectPlayer(Door door)
         {
             player.ProceduralWeaponAnimation.ForceReact.AddForce(1, Plugin.RecoilHands.Value, Plugin.RecoilCamera.Value);
 
@@ -98,11 +117,8 @@ namespace tarkin.doordash
             MaterialType doorMat = GetDoorMaterialFromBreachSound(door.BreachSound.name);
             float dmg = GetDamageFromDoorMaterial(doorMat);
 
-            if (wasLocked)
-                dmg *= Plugin.LockedBreachDamageMultiplier.Value;
-
             player.ActiveHealthController.ApplyDamage(Plugin.BodyPartToHurt.Value, dmg, dmgInfo);
-            player.ActiveHealthController.DoContusion(Plugin.ContusionTime.Value, Plugin.ContusionStrength.Value);
+            player.ActiveHealthController.DoContusion(Plugin.ContusionStrength.Value, 0.5f);
         }
 
         float GetDamageFromDoorMaterial(MaterialType mat)
@@ -124,9 +140,12 @@ namespace tarkin.doordash
         {
             if (name.Contains("wood"))
                 return MaterialType.WoodThick;
+            
             if (name.Contains("plastic"))
                 return MaterialType.Plastic;
-            if (name.Contains("grate") || name.Contains("metal"))
+            
+            if (name.Contains("grate") || 
+                name.Contains("metal"))
                 return MaterialType.MetalThick;
 
             return MaterialType.None;
