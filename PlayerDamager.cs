@@ -17,37 +17,40 @@ namespace tarkin.doordash
 
         private void OnTriggerEnter(Collider other)
         {
-            if (self == null || self.velocity.sqrMagnitude < 0.5f)
+            if (self is null || 
+                self.velocity.sqrMagnitude < 0.5f)
                 return;
 
-            if (other.gameObject.layer == LayerMaskClass.PlayerLayer)
-            {
-                if (other.gameObject.TryGetComponent<Player>(out Player hitReceiver) && !hitReceiver.IsYourPlayer)
-                {
-                    Hit(other.gameObject,
-                        Vector3.Lerp(self.position, other.transform.position, 0.5f),
-                        Vector3.Normalize(self.position - other.transform.position),
-                        self.velocity);
-                }
-            }
+            if (other.gameObject.layer != LayerMaskClass.PlayerLayer) 
+                return;
+            
+            if (other.gameObject.TryGetComponent(out Player hitReceiver) && 
+                !hitReceiver.IsYourPlayer)
+                Hit(other.gameObject,
+                    Vector3.Lerp(self.position, other.transform.position, 0.5f),
+                    Vector3.Normalize(self.position - other.transform.position),
+                    self.velocity);
         }
 
         private void OnCollisionEnter(Collision collision)
         {
-            if (self == null || collision.impulse.sqrMagnitude < 0.5f)
+            if (self is null || 
+                collision.impulse.sqrMagnitude < 0.5f)
                 return;
 
             ContactPoint contact = collision.GetContact(0);
             Vector3 hitPoint = contact.point;
             Vector3 hitNormal = contact.normal;
 
-            if (collision.gameObject.layer == LayerMaskClass.PlayerLayer)
-            {
-                if (collision.gameObject.TryGetComponent<Player>(out Player hitReceiver) && !hitReceiver.IsYourPlayer)
-                {
-                    Hit(collision.gameObject, hitPoint, hitNormal, self.velocity);
-                }
-            }
+            if (collision.gameObject.layer != LayerMaskClass.PlayerLayer) 
+                return;
+            
+            if (collision.gameObject.TryGetComponent(out Player hitReceiver) && 
+                !hitReceiver.IsYourPlayer)
+                Hit(collision.gameObject, 
+                    hitPoint, 
+                    hitNormal, 
+                    self.velocity);
         }
 
         private void Hit(GameObject gameObject, Vector3 hitPoint, Vector3 hitNormal, Vector3 impulse)
@@ -64,30 +67,31 @@ namespace tarkin.doordash
                 Vector3 partPosition = bpc.transform.position;
                 float distSqr = (hitPoint - partPosition).sqrMagnitude;
 
-                if (distSqr < closestDistanceSqr)
-                {
-                    closestDistanceSqr = distSqr;
-                    closestBodyPart = bpc;
-                }
+                if (!(distSqr < closestDistanceSqr)) 
+                    continue;
+                
+                closestDistanceSqr = distSqr;
+                closestBodyPart = bpc;
             }
 
-            if (closestBodyPart != null)
+            if (closestBodyPart is null) 
+                return;
+            
+            RaycastHit fakeHit = new()
             {
-                RaycastHit fakeHit = new RaycastHit();
-                fakeHit.point = hitPoint;
-                fakeHit.normal = hitNormal;
-                float force = impulse.sqrMagnitude;
-                Hit(impulse.normalized, closestBodyPart, fakeHit, force * 100f);
-            }
+                point = hitPoint,
+                normal = hitNormal
+            };
+            
+            float force = impulse.sqrMagnitude;
+            Hit(impulse.normalized, closestBodyPart, fakeHit, force * 100f);
         }
 
 
         public static void Hit(Vector3 impactDirection, BallisticCollider ballisticCollider, RaycastHit hit, float dmg)
         {
-            if (ballisticCollider == null)
-            {
+            if (ballisticCollider is null)
                 return;
-            }
 
             var mainPlayerBridge = Singleton<GameWorld>.Instance?.GetAlivePlayerBridgeByProfileID(Singleton<GameWorld>.Instance?.MainPlayer?.ProfileId);
 
